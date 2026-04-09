@@ -1,0 +1,14 @@
+name = "webhook-inbox-mcp-worker"
+main = "src/index.js"
+compatibility_date = "2026-04-09"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "INBOX_KV"
+id = "982ee58d1d234d9299caa0521d7ce4ba"
+preview_id = "7ca2116e58dc42a4b31f1721a4cb739e"
+
+
+[[routes]]
+pattern = "webhook-mcp.qdp.qzz.io/*"
+zone_name = "qdp.qzz.io"
