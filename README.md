@@ -10,19 +10,18 @@ A Cloudflare Worker providing an MCP server for webhook ingestion and inbox stor
 | `list_messages` | List recent inbox messages (id, timestamp, summary). |
 | `get_message` | Read a single message by id, including the full JSON payload. |
 | `delete_message` | Delete a single message by id. |
-| `health` | Worker health check. |
 
 ## How It Works
 
 Messages are stored in a Cloudflare KV namespace (`INBOX_KV`). Each message gets a unique id and timestamp. The inbox is ordered by insertion time (newest first).
 
-The MCP endpoint follows standard JSON-RPC (`/mcp`). The worker also accepts direct POST requests to `/` for webhook ingestion from external services.
+The MCP endpoint follows standard JSON-RPC (`/mcp`). The worker also accepts direct POST requests to `/webhook` for webhook ingestion from external services — the root `/` is a GET health/info endpoint reporting the tool list and endpoints.
 
 ## Local Development
 
 ```bash
 npm install
-npx wrangler dev --local --port 8793
+npx wrangler dev --local --port 8791
 ```
 
 ## Deploy

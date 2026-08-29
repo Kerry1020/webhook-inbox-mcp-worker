@@ -10,13 +10,18 @@
 | `list_messages` | 列出最近的消息（id、时间戳、摘要）。 |
 | `get_message` | 按 id 读取完整消息。 |
 | `delete_message` | 按 id 删除消息。 |
-| `health` | 健康检查。 |
+
+## 工作原理
+
+消息存在 Cloudflare KV namespace（`INBOX_KV`）。每条消息有唯一 id 和时间戳，收件箱按插入时间倒序（最新在前）。
+
+MCP 端点遵循标准 JSON-RPC（`/mcp`）。worker 同时接受外部服务直接 POST `/webhook` 写入 webhook 数据——根路径 `/` 是 GET 健康检查，返回工具列表和各端点地址。
 
 ## 本地开发
 
 ```bash
 npm install
-npx wrangler dev --local --port 8793
+npx wrangler dev --local --port 8791
 ```
 
 ## 部署
