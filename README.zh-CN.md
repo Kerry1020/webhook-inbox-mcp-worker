@@ -39,3 +39,17 @@ webhook-inbox-mcp-worker/
 ├── package.json
 └── README.md
 ```
+
+## 配置
+
+`wrangler.toml` 中必须绑定 KV namespace：
+
+```toml
+[[kv_namespaces]]
+binding = "INBOX_KV"
+id = "<your-kv-namespace-id>"
+```
+
+## 许可证
+
+本项目基于 GNU General Public License v3.0 发布——详见 [LICENSE](LICENSE)。
