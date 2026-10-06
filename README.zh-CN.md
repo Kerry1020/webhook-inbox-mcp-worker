@@ -1,12 +1,15 @@
 # webhook-inbox-mcp-worker
 
 [![CI](https://github.com/Kerry1020/webhook-inbox-mcp-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/Kerry1020/webhook-inbox-mcp-worker/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-6E56CF)](https://modelcontextprotocol.io)
 
 [English](README.md) | 简体中文
 
 基于 Cloudflare Worker 的 webhook **收件箱**：将收到的 webhook 存入 Cloudflare KV，并以 [MCP](https://modelcontextprotocol.io) 服务器的形式提供给 AI 代理，用于列出、读取和删除事件。
 
-## 功能
+## 功能特性
 
 - `POST /webhook` 接收外部服务（GitHub、Stripe、定时任务等）发来的任意 JSON
 - 通过 `POST /mcp` 提供 Streamable HTTP（JSON 响应）MCP 服务，无 SDK 依赖
@@ -18,7 +21,21 @@
 - 可选鉴权：读取用 `MCP_AUTH_TOKEN`，写入用 `WEBHOOK_TOKEN`
 - 可选自动过期（`MESSAGE_TTL_SECONDS`）、大小限制、可配置 CORS
 
-## MCP 工具
+## 快速开始
+
+```bash
+git clone https://github.com/Kerry1020/webhook-inbox-mcp-worker.git
+cd webhook-inbox-mcp-worker
+npm install
+npm run dev        # http://localhost:8791，使用本地模拟 KV
+
+curl -s localhost:8791/webhook -H 'content-type: application/json' -d '{"hello":"world"}'
+curl -s localhost:8791/messages
+```
+
+部署到自己的 Cloudflare 账号见[部署](#部署)。
+
+## 工具列表
 
 | 工具 | 参数 | 说明 |
 |------|------|------|
@@ -62,52 +79,77 @@ v0.1 使用单个 `inbox:index` 数组（最近 200 个 id）。升级后第一�
 
 KV 是最终一致的：新消息可能需要约 60 秒才会在其他节点的 `list` 中出现。未设置 `MESSAGE_TTL_SECONDS` 时，消息会一直保留直到被删除。
 
-## 鉴权
+## 配置
 
-默认**不开启**鉴权，适合本地测试。公开部署前请开启：
+| 名称 | 必填 | Secret | 默认值 | 说明 |
+|------|------|--------|--------|------|
+| `INBOX_KV` | 是 | 否 | - | 存放收件箱的 KV namespace 绑定（在 `wrangler.toml` 中配置）。 |
+| `MCP_AUTH_TOKEN` | 否 | 是 | 未设置（不鉴权） | `/mcp` 与 `/messages*` 所需的 Bearer token。 |
+| `WEBHOOK_TOKEN` | 否 | 是 | 未设置（不鉴权） | `POST /webhook` 所需的 token。 |
+| `MESSAGE_TTL_SECONDS` | 否 | 否 | 未设置（永久保留） | 消息 N 秒后自动过期；小于 60 的值会被忽略。 |
+| `CORS_ALLOW_ORIGIN` | 否 | 否 | `*` | `Access-Control-Allow-Origin` 的值。 |
 
-```bash
-npx wrangler secret put MCP_AUTH_TOKEN   # 保护 /mcp 和 /messages*
-npx wrangler secret put WEBHOOK_TOKEN    # 保护 POST /webhook
-```
+Secret 用 `npx wrangler secret put <NAME>` 设置；普通变量写在 `wrangler.toml` 的 `[vars]` 中。本地开发时把 `.dev.vars.example` 复制为 `.dev.vars` 即可。
+
+### 鉴权方式
 
 - MCP / REST 客户端发送 `Authorization: Bearer <MCP_AUTH_TOKEN>`。
-- webhook 发送方可以用 `Authorization: Bearer <WEBHOOK_TOKEN>`、`X-Webhook-Token` 请求头，或在只能配置 URL 的服务里用 `?token=<WEBHOOK_TOKEN>`。查询参数可能出现在日志中，能用请求头时尽量用请求头。
-
-| 变量 | 类型 | 说明 |
-|------|------|------|
-| `MCP_AUTH_TOKEN` | secret | 可选。`/mcp` 与 `/messages*` 的 Bearer token。 |
-| `WEBHOOK_TOKEN` | secret | 可选。`POST /webhook` 的 token。 |
-| `MESSAGE_TTL_SECONDS` | var | 可选。消息 N 秒后过期（最小 60）。 |
-| `CORS_ALLOW_ORIGIN` | var | 可选。`Access-Control-Allow-Origin` 的值（默认 `*`）。 |
+- webhook 发送方可以用 `Authorization: Bearer <WEBHOOK_TOKEN>`、`X-Webhook-Token` 请求头，或在只能配置 URL 的服务里用 `?token=<WEBHOOK_TOKEN>`。查询参数可能被记进日志，能用请求头时尽量用请求头。
 
 ## MCP 客户端配置
 
 Claude Code（原生 Streamable HTTP）：
 
 ```bash
-claude mcp add --transport http inbox https://<your-worker>/mcp \
-  --header "Authorization: Bearer <MCP_AUTH_TOKEN>"   # 未启用鉴权可省略
+claude mcp add --transport http webhook-inbox https://<your-worker>.workers.dev/mcp
+
+# 设置了 MCP_AUTH_TOKEN 时
+claude mcp add --transport http webhook-inbox https://<your-worker>.workers.dev/mcp \
+  --header "Authorization: Bearer <token>"
 ```
 
-JSON 配置（Cursor、通过 `mcp-remote` 的 Claude Desktop 等）：
+Claude Desktop 或其他 JSON 配置（通过 `mcp-remote`）：
 
 ```json
 {
   "mcpServers": {
     "webhook-inbox": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://<your-worker>/mcp", "--header", "Authorization: Bearer ${INBOX_MCP_TOKEN}"],
-      "env": { "INBOX_MCP_TOKEN": "<MCP_AUTH_TOKEN>" }
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://<your-worker>.workers.dev/mcp",
+        "--header",
+        "Authorization: Bearer ${AUTH_TOKEN}"
+      ],
+      "env": {
+        "AUTH_TOKEN": "<token>"
+      }
     }
   }
 }
 ```
 
+未启用鉴权时，去掉 `--header` 两项参数和 `env` 即可。
+
+## 安全说明
+
+- 默认**不开启**鉴权，仅适合本地测试。没有 `MCP_AUTH_TOKEN` 时，任何知道 URL 的人都能通过 `/mcp` 和 `/messages*` 读取、删除全部消息；没有 `WEBHOOK_TOKEN` 时，任何人都能往收件箱里写数据。公开部署务必两个都设置：
+
+  ```bash
+  npx wrangler secret put MCP_AUTH_TOKEN   # 保护 /mcp 和 /messages*
+  npx wrangler secret put WEBHOOK_TOKEN    # 保护 POST /webhook
+  ```
+
+- `GET /` 和 `/healthz` 始终公开，只返回工具列表和各项鉴权是否开启，不会泄露 token。
+- token 比较采用常量时间（比较 SHA-256 摘要）。
+- CORS 默认是 `*`；如果只允许特定来源的浏览器访问，请设置 `CORS_ALLOW_ORIGIN`。
+- webhook payload 原样存入 KV。若包含敏感数据，可配合 `MESSAGE_TTL_SECONDS` 或 `delete_message` 及时清理。
+
 ## curl 示例
 
 ```bash
-BASE=http://localhost:8791          # 或 https://<your-worker>
+BASE=http://localhost:8791          # 或 https://<your-worker>.workers.dev
 
 # 写入 webhook
 curl -s $BASE/webhook -H 'content-type: application/json' \
@@ -129,7 +171,7 @@ curl -s $BASE/mcp -H 'content-type: application/json' -H "Authorization: Bearer 
 
 未启用鉴权时去掉 token 相关请求头即可。
 
-## 本地开发
+## 开发
 
 需要 Node.js 20+。
 
@@ -138,6 +180,7 @@ npm install
 cp .dev.vars.example .dev.vars   # 可选：本地 secrets
 npm run dev                      # http://localhost:8791（本地模拟 KV）
 npm test                         # node:test 测试，使用内存 KV mock
+npm run build                    # wrangler dry-run 打包到 dist/
 ```
 
 ## 部署
@@ -146,11 +189,13 @@ npm test                         # node:test 测试，使用内存 KV mock
 npx wrangler login
 npx wrangler kv namespace create INBOX_KV            # 将 id 填入 wrangler.toml
 npx wrangler kv namespace create INBOX_KV --preview  # 填入 preview_id
-# 按自己的域名修改或删除 wrangler.toml 中的 [[routes]]
+# 删除或修改 wrangler.toml 中的 [[routes]]（指向原作者的自定义域名）
 npx wrangler secret put MCP_AUTH_TOKEN               # 建议
 npx wrangler secret put WEBHOOK_TOKEN                # 建议
 npm run deploy
 ```
+
+去掉 `[[routes]]` 后，worker 的地址为 `https://webhook-inbox-mcp-worker.<your-subdomain>.workers.dev`。
 
 ## 项目结构
 
@@ -167,6 +212,16 @@ webhook-inbox-mcp-worker/
 ├── wrangler.toml
 └── package.json
 ```
+
+## 相关项目
+
+- [time-mcp-worker](https://github.com/Kerry1020/time-mcp-worker) — 时区查询、时间换算与时差计算
+- [geo-mcp-worker](https://github.com/Kerry1020/geo-mcp-worker) — 基于 OpenStreetMap 服务的地理编码、POI 搜索和路线规划
+- [memory-mcp-worker](https://github.com/Kerry1020/memory-mcp-worker) — 基于 KV 的智能体持久化记忆
+- [summarize-mcp-worker](https://github.com/Kerry1020/summarize-mcp-worker) — 网页正文提取与抽取式摘要
+- [image-mcp-worker](https://github.com/Kerry1020/image-mcp-worker) — 对接任意 OpenAI 兼容图像接口的图片生成
+- [calc-mcp-worker](https://github.com/Kerry1020/calc-mcp-worker) — 数学计算：表达式、微积分、矩阵、统计
+- [search-mcp-worker](https://github.com/Kerry1020/search-mcp-worker) — 多引擎网页搜索，排序逻辑公开可审计
 
 ## 许可证
 

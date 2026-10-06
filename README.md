@@ -1,6 +1,9 @@
 # webhook-inbox-mcp-worker
 
 [![CI](https://github.com/Kerry1020/webhook-inbox-mcp-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/Kerry1020/webhook-inbox-mcp-worker/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-6E56CF)](https://modelcontextprotocol.io)
 
 English | [简体中文](README.zh-CN.md)
 
@@ -17,6 +20,20 @@ A Cloudflare Worker that receives webhooks into a Cloudflare KV **inbox** and ex
 - Idempotency keys (`X-Idempotency-Key`) de-duplicate webhook retries
 - Optional auth: `MCP_AUTH_TOKEN` for reading, `WEBHOOK_TOKEN` for ingestion
 - Optional automatic expiry (`MESSAGE_TTL_SECONDS`), size limits, configurable CORS
+
+## Quick Start
+
+```bash
+git clone https://github.com/Kerry1020/webhook-inbox-mcp-worker.git
+cd webhook-inbox-mcp-worker
+npm install
+npm run dev        # http://localhost:8791 with a local KV simulation
+
+curl -s localhost:8791/webhook -H 'content-type: application/json' -d '{"hello":"world"}'
+curl -s localhost:8791/messages
+```
+
+See [Deploy](#deploy) to run it on your own Cloudflare account.
 
 ## MCP Tools
 
@@ -62,52 +79,77 @@ v0.1 kept a single `inbox:index` array (newest 200 ids). The first listing after
 
 KV is eventually consistent: a new message can take up to about 60 s to show up in `list` from other locations. Without `MESSAGE_TTL_SECONDS`, messages are kept until deleted.
 
-## Authentication
+## Configuration
 
-Auth is **off by default**, which suits local testing. Enable it before exposing the worker publicly.
+| Name | Required | Secret | Default | Description |
+|------|----------|--------|---------|-------------|
+| `INBOX_KV` | yes | no | - | KV namespace binding that stores the inbox (set in `wrangler.toml`). |
+| `MCP_AUTH_TOKEN` | no | yes | unset (auth off) | Bearer token required on `/mcp` and `/messages*`. |
+| `WEBHOOK_TOKEN` | no | yes | unset (auth off) | Token required on `POST /webhook`. |
+| `MESSAGE_TTL_SECONDS` | no | no | unset (keep forever) | Expire messages after N seconds; values below 60 are ignored. |
+| `CORS_ALLOW_ORIGIN` | no | no | `*` | `Access-Control-Allow-Origin` value. |
 
-```bash
-npx wrangler secret put MCP_AUTH_TOKEN   # protects /mcp and /messages*
-npx wrangler secret put WEBHOOK_TOKEN    # protects POST /webhook
-```
+Secrets are set with `npx wrangler secret put <NAME>`; plain vars go in a `[vars]` block in `wrangler.toml`. For local development, copy `.dev.vars.example` to `.dev.vars`.
+
+### Authentication
 
 - MCP / REST clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 - Webhook senders send the token as `Authorization: Bearer <WEBHOOK_TOKEN>`, as an `X-Webhook-Token` header, or, for services that only let you configure a URL, as `?token=<WEBHOOK_TOKEN>`. Query strings can end up in logs, so use a header where possible.
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `MCP_AUTH_TOKEN` | secret | Optional. Bearer token for `/mcp` and `/messages*`. |
-| `WEBHOOK_TOKEN` | secret | Optional. Token for `POST /webhook`. |
-| `MESSAGE_TTL_SECONDS` | var | Optional. Expire messages after N seconds (min 60). |
-| `CORS_ALLOW_ORIGIN` | var | Optional. `Access-Control-Allow-Origin` value (default `*`). |
 
 ## MCP Client Configuration
 
 Claude Code (native Streamable HTTP):
 
 ```bash
-claude mcp add --transport http inbox https://<your-worker>/mcp \
-  --header "Authorization: Bearer <MCP_AUTH_TOKEN>"   # omit if auth is disabled
+claude mcp add --transport http webhook-inbox https://<your-worker>.workers.dev/mcp
+
+# with MCP_AUTH_TOKEN set
+claude mcp add --transport http webhook-inbox https://<your-worker>.workers.dev/mcp \
+  --header "Authorization: Bearer <token>"
 ```
 
-JSON config (Cursor, Claude Desktop via `mcp-remote`, etc.):
+Claude Desktop / other JSON configs via `mcp-remote`:
 
 ```json
 {
   "mcpServers": {
     "webhook-inbox": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://<your-worker>/mcp", "--header", "Authorization: Bearer ${INBOX_MCP_TOKEN}"],
-      "env": { "INBOX_MCP_TOKEN": "<MCP_AUTH_TOKEN>" }
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://<your-worker>.workers.dev/mcp",
+        "--header",
+        "Authorization: Bearer ${AUTH_TOKEN}"
+      ],
+      "env": {
+        "AUTH_TOKEN": "<token>"
+      }
     }
   }
 }
 ```
 
+Drop the `--header` arguments and `env` if auth is disabled.
+
+## Security Notes
+
+- Auth is **off by default**, which suits local testing only. Without `MCP_AUTH_TOKEN`, anyone who knows the URL can read and delete every message via `/mcp` and `/messages*`; without `WEBHOOK_TOKEN`, anyone can write to the inbox. For any public deployment set both:
+
+  ```bash
+  npx wrangler secret put MCP_AUTH_TOKEN   # protects /mcp and /messages*
+  npx wrangler secret put WEBHOOK_TOKEN    # protects POST /webhook
+  ```
+
+- `GET /` and `/healthz` are always public; they report the tool list and whether each auth mode is enabled, never the tokens.
+- Tokens are compared in constant time (SHA-256 digests).
+- CORS defaults to `*`; set `CORS_ALLOW_ORIGIN` if browsers should only reach the worker from a specific origin.
+- Webhook payloads are stored as-is in KV. Use `MESSAGE_TTL_SECONDS` or `delete_message` if they contain sensitive data.
+
 ## curl Examples
 
 ```bash
-BASE=http://localhost:8791          # or https://<your-worker>
+BASE=http://localhost:8791          # or https://<your-worker>.workers.dev
 
 # Ingest a webhook
 curl -s $BASE/webhook -H 'content-type: application/json' \
@@ -129,7 +171,7 @@ curl -s $BASE/mcp -H 'content-type: application/json' -H "Authorization: Bearer 
 
 If auth is disabled, drop the token headers.
 
-## Local Development
+## Development
 
 Requires Node.js 20+.
 
@@ -138,6 +180,7 @@ npm install
 cp .dev.vars.example .dev.vars   # optional: local secrets
 npm run dev                      # http://localhost:8791 (local KV simulation)
 npm test                         # node:test suite with an in-memory KV mock
+npm run build                    # wrangler dry-run bundle into dist/
 ```
 
 ## Deploy
@@ -146,11 +189,13 @@ npm test                         # node:test suite with an in-memory KV mock
 npx wrangler login
 npx wrangler kv namespace create INBOX_KV            # copy the id into wrangler.toml
 npx wrangler kv namespace create INBOX_KV --preview  # copy into preview_id
-# edit or remove the [[routes]] block in wrangler.toml for your own domain
+# remove or edit the [[routes]] block in wrangler.toml (it points at the original custom domain)
 npx wrangler secret put MCP_AUTH_TOKEN               # recommended
 npx wrangler secret put WEBHOOK_TOKEN                # recommended
 npm run deploy
 ```
+
+Without a `[[routes]]` block the worker is served at `https://webhook-inbox-mcp-worker.<your-subdomain>.workers.dev`.
 
 ## Project Structure
 
@@ -167,6 +212,16 @@ webhook-inbox-mcp-worker/
 ├── wrangler.toml
 └── package.json
 ```
+
+## Related Projects
+
+- [time-mcp-worker](https://github.com/Kerry1020/time-mcp-worker) — time zone lookup, conversion and time differences
+- [geo-mcp-worker](https://github.com/Kerry1020/geo-mcp-worker) — geocoding, POI search and routing via OpenStreetMap services
+- [memory-mcp-worker](https://github.com/Kerry1020/memory-mcp-worker) — persistent KV-backed memory for agents
+- [summarize-mcp-worker](https://github.com/Kerry1020/summarize-mcp-worker) — web page extraction and extractive summarization
+- [image-mcp-worker](https://github.com/Kerry1020/image-mcp-worker) — image generation via any OpenAI-compatible images API
+- [calc-mcp-worker](https://github.com/Kerry1020/calc-mcp-worker) — math: expressions, calculus, matrices, statistics
+- [search-mcp-worker](https://github.com/Kerry1020/search-mcp-worker) — multi-engine web search with open, auditable ranking
 
 ## License
 
