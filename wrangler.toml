@@ -3,12 +3,25 @@ main = "src/index.js"
 compatibility_date = "2026-04-09"
 workers_dev = true
 
+# KV namespace that stores the inbox. Create your own with:
+#   npx wrangler kv namespace create INBOX_KV
+#   npx wrangler kv namespace create INBOX_KV --preview
+# and replace the ids below (namespace ids are identifiers, not secrets).
 [[kv_namespaces]]
 binding = "INBOX_KV"
 id = "982ee58d1d234d9299caa0521d7ce4ba"
 preview_id = "7ca2116e58dc42a4b31f1721a4cb739e"
 
-
+# Custom domain route for the original deployment. Remove or change this block
+# when deploying to your own account.
 [[routes]]
 pattern = "webhook-mcp.qdp.qzz.io/*"
 zone_name = "qdp.qzz.io"
+
+# Optional secrets / vars (secrets: `npx wrangler secret put <NAME>`):
+#   MCP_AUTH_TOKEN       - bearer token required on /mcp and /messages*
+#   WEBHOOK_TOKEN        - token required on POST /webhook
+#   MESSAGE_TTL_SECONDS  - auto-expire messages (>= 60); unset = keep forever
+#   CORS_ALLOW_ORIGIN    - Access-Control-Allow-Origin value (default "*")
+# [vars]
+# MESSAGE_TTL_SECONDS = "604800"

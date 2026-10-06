@@ -1,0 +1,9 @@
+# Copy to .dev.vars for `npm run dev`. Never commit .dev.vars.
+# Optional: require `Authorization: Bearer <token>` on /mcp and /messages*.
+# MCP_AUTH_TOKEN=change-me
+# Optional: require a token on POST /webhook (Bearer, X-Webhook-Token header, or ?token=).
+# WEBHOOK_TOKEN=change-me
+# Optional: auto-expire messages after N seconds (>= 60).
+# MESSAGE_TTL_SECONDS=604800
+# Optional: restrict CORS (default "*").
+# CORS_ALLOW_ORIGIN=https://example.com
